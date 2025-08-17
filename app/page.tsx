@@ -18,24 +18,34 @@ export default function Page() {
   const [file, setFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const clientId = useRef<string>('' + Date.now() + Math.random());
 
   const sendMessage = () => {
-    if (!input && !file) return;
-    const msg: ChatMessage = {
+    if (!wsRef.current || (!input && !file)) return;
+    const payload: any = {
       id: Date.now(),
-      sender: 'me',
+      senderId: clientId.current,
     };
-    if (input) msg.text = input;
+    if (input) payload.text = input;
+    const finalize = () => {
+      wsRef.current?.send(JSON.stringify(payload));
+    };
     if (file) {
-      const url = URL.createObjectURL(file);
-      const type = file.type.startsWith('image')
-        ? 'image'
-        : file.type.startsWith('video')
-        ? 'video'
-        : null;
-      if (type) msg.file = { url, type };
+      const reader = new FileReader();
+      reader.onload = () => {
+        const type = file.type.startsWith('image')
+          ? 'image'
+          : file.type.startsWith('video')
+          ? 'video'
+          : null;
+        if (type) payload.file = { url: reader.result as string, type };
+        finalize();
+      };
+      reader.readAsDataURL(file);
+    } else {
+      finalize();
     }
-    setMessages(prev => [...prev, msg]);
     setInput('');
     setFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -49,6 +59,28 @@ export default function Page() {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const socket = new WebSocket(`${protocol}://${window.location.host}/api/socket`);
+    wsRef.current = socket;
+    socket.onmessage = event => {
+      try {
+        const data = JSON.parse(event.data);
+        const sender = data.senderId === clientId.current ? 'me' : 'other';
+        const msg: ChatMessage = {
+          id: data.id,
+          text: data.text,
+          file: data.file,
+          sender,
+        };
+        setMessages(prev => [...prev, msg]);
+      } catch {}
+    };
+    return () => {
+      socket.close();
+    };
+  }, []);
 
   return (
     <div className="flex flex-col h-full">
